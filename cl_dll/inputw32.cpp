@@ -1125,6 +1125,10 @@ void IN_Init()
 
 #ifdef WIN32
 	m_rawinput = gEngfuncs.pfnGetCvarPointer("m_rawinput");
+
+	if (!m_rawinput)
+		m_rawinput = gEngfuncs.pfnRegisterVariable("m_rawinput", "0", FCVAR_ARCHIVE);
+
 	m_bMouseThread = gEngfuncs.CheckParm("-mousethread", NULL) != NULL;
 	m_mousethread_sleep = gEngfuncs.pfnRegisterVariable("m_mousethread_sleep", "10", FCVAR_ARCHIVE);
 

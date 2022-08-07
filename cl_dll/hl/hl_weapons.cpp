@@ -30,6 +30,8 @@
 #include "../com_weapons.h"
 #include "../demo.h"
 
+#include "CGravGun.h"
+
 extern int g_iUser1;
 
 // Pool of client side entities/entvars_t
@@ -64,7 +66,7 @@ CHandGrenade g_HandGren;
 CSatchel g_Satchel;
 CTripmine g_Tripmine;
 CSqueak g_Snark;
-
+CGravGun g_gGun;
 
 /*
 ======================
@@ -464,6 +466,7 @@ void HUD_InitClientWeapons()
 	HUD_PrepEntity(&g_Satchel, &player);
 	HUD_PrepEntity(&g_Tripmine, &player);
 	HUD_PrepEntity(&g_Snark, &player);
+	HUD_PrepEntity(&g_gGun, &player);
 }
 
 /*
@@ -585,6 +588,10 @@ void HUD_WeaponsPostThink(local_state_s* from, local_state_s* to, usercmd_t* cmd
 
 	case WEAPON_SNARK:
 		pWeapon = &g_Snark;
+		break;
+
+	case WEAPON_GRAVGUN:
+		pWeapon = &g_gGun;
 		break;
 	}
 

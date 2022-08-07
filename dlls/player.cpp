@@ -3487,6 +3487,7 @@ void CBasePlayer::CheatImpulseCommands(int iImpulse)
 		GiveNamedItem("weapon_satchel");
 		GiveNamedItem("weapon_snark");
 		GiveNamedItem("weapon_hornetgun");
+		GiveNamedItem("weapon_gravitygun");
 
 		gEvilImpulse101 = false;
 		break;

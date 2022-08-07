@@ -61,7 +61,6 @@ extern cvar_t *scr_ofsx, *scr_ofsy, *scr_ofsz;
 extern cvar_t* cl_vsmoothing;
 extern cvar_t* cl_rollangle;
 extern cvar_t* cl_rollspeed;
-extern cvar_t* cl_bobtilt;
 
 #define CAM_MODE_RELAX 1
 #define CAM_MODE_FOCUS 2
@@ -158,28 +157,30 @@ void V_InterpolateAngles( float *start, float *end, float *output, float frac )
 	V_NormalizeAngles( output );
 } */
 
-// Quakeworld bob code, this fixes jitters in the mutliplayer since the clock (pparams->time) isn't quite linear
-float V_CalcBob(struct ref_params_s* pparams)
+enum calcBobMode_t
 {
-	static double bobtime = 0;
-	static float bob = 0;
-	float cycle;
-	static float lasttime = 0;
-	Vector vel;
+	VB_COS,
+	VB_SIN,
+	VB_COS2,
+	VB_SIN2
+};
 
+// Quakeworld bob code, this fixes jitters in the mutliplayer since the clock (pparams->time) isn't quite linear
+void V_CalcBob(struct ref_params_s* pparams, float freqmod, calcBobMode_t mode, double& bobtime, float& bob, float& lasttime)
+{
+	float cycle;
+	Vector vel;
 
 	if (pparams->onground == -1 ||
 		pparams->time == lasttime)
 	{
 		// just use old value
-		return bob;
+		return; // bob;
 	}
 
 	lasttime = pparams->time;
 
-	//TODO: bobtime will eventually become a value so large that it will no longer behave properly.
-	//Consider resetting the variable if a level change is detected (pparams->time < lasttime might do the trick).
-	bobtime += pparams->frametime;
+	bobtime += pparams->frametime * freqmod;
 	cycle = bobtime - (int)(bobtime / cl_bobcycle->value) * cl_bobcycle->value;
 	cycle /= cl_bobcycle->value;
 
@@ -197,11 +198,20 @@ float V_CalcBob(struct ref_params_s* pparams)
 	VectorCopy(pparams->simvel, vel);
 	vel[2] = 0;
 
-	bob = sqrt(vel[0] * vel[0] + vel[1] * vel[1]) * cl_bob->value;
-	bob = bob * 0.3 + bob * 0.7 * sin(cycle);
+    bob = sqrt(vel[0] * vel[0] + vel[1] * vel[1]) * cl_bob->value;
+
+	if (mode == VB_SIN)
+		bob = bob * 0.3 + bob * 0.7 * sin(cycle);
+	else if (mode == VB_COS)
+		bob = bob * 0.3 + bob * 0.7 * cos(cycle);
+	else if (mode == VB_SIN2)
+		bob = bob * 0.3 + bob * 0.7 * sin(cycle) * sin(cycle);
+	else if (mode == VB_COS2)
+		bob = bob * 0.3 + bob * 0.7 * cos(cycle) * cos(cycle);
+
 	bob = V_min(bob, 4);
 	bob = V_max(bob, -7);
-	return bob;
+	// return bob;
 }
 
 /*
@@ -480,6 +490,70 @@ typedef struct
 	int CurrentAngle;
 } viewinterp_t;
 
+float m_flWeaponLag = 1.5f;
+
+void V_CalcViewModelLag(ref_params_t* pparams, Vector& origin, Vector angles, Vector original_angles)
+{
+	static Vector m_vecLastFacing;
+	Vector vOriginalOrigin = origin;
+	Vector vOriginalAngles = angles;
+
+	// Calculate our drift
+	Vector forward, right, up;
+	AngleVectors(angles, forward, right, up);
+
+	if (pparams->frametime != 0.0f) // not in paused
+	{
+		Vector vDifference;
+
+		vDifference = forward - m_vecLastFacing;
+
+		float flSpeed = 5.0f;
+
+		// If we start to lag too far behind, we'll increase the "catch up" speed.
+		// Solves the problem with fast cl_yawspeed, m_yaw or joysticks rotating quickly.
+		// The old code would slam lastfacing with origin causing the viewmodel to pop to a new position
+		float flDiff = vDifference.Length();
+		if ((flDiff > m_flWeaponLag) && (m_flWeaponLag > 0.0f))
+		{
+			float flScale = flDiff / m_flWeaponLag;
+			flSpeed *= flScale;
+		}
+
+		// FIXME:  Needs to be predictable?
+		m_vecLastFacing = m_vecLastFacing + vDifference * (flSpeed * pparams->frametime);
+		// Make sure it doesn't grow out of control!!!
+		m_vecLastFacing = m_vecLastFacing.Normalize();
+		origin = origin + (vDifference * -1.0f) * 5.0f;
+	}
+
+	AngleVectors(original_angles, forward, right, up);
+
+	float pitch = original_angles[PITCH];
+
+	if (pitch > 180.0f)
+	{
+		pitch -= 360.0f;
+	}
+	else if (pitch < -180.0f)
+	{
+		pitch += 360.0f;
+	}
+
+	if (m_flWeaponLag <= 0.0f)
+	{
+		origin = vOriginalOrigin;
+		angles = vOriginalAngles;
+	}
+	else
+	{
+		// FIXME: These are the old settings that caused too many exposed polys on some models
+		origin = origin + forward * (-pitch * 0.035f);
+		origin = origin + right * (-pitch * 0.03f);
+		origin = origin + up * (-pitch * 0.02f);
+	}
+}
+
 /*
 ==================
 V_CalcRefdef
@@ -491,7 +565,11 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 	cl_entity_t *ent, *view;
 	int i;
 	Vector angles;
-	float bob, waterOffset;
+
+	static double bobtimes[2] = {0, 0};
+	static float lasttimes[2] = {0, 0};
+
+	float bobRight = 0, bobUp = 0, waterOffset;
 	static viewinterp_t ViewInterp;
 
 	static float oldz = 0;
@@ -517,11 +595,11 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 
 	// transform the view offset by the model's matrix to get the offset from
 	// model origin for the view
-	bob = V_CalcBob(pparams);
+	V_CalcBob(pparams, 0.75f, VB_SIN, bobtimes[0], bobRight, lasttimes[0]);	  // right
+	V_CalcBob(pparams, 1.50f, VB_SIN, bobtimes[1], bobUp, lasttimes[1]);	  // up
 
 	// refresh position
 	VectorCopy(pparams->simorg, pparams->vieworg);
-	pparams->vieworg[2] += (bob);
 	VectorAdd(pparams->vieworg, pparams->viewheight, pparams->vieworg);
 
 	VectorCopy(pparams->cl_viewangles, pparams->viewangles);
@@ -652,18 +730,8 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 
 	for (i = 0; i < 3; i++)
 	{
-		view->origin[i] += bob * 0.4 * pparams->forward[i];
-	}
-	view->origin[2] += bob;
-
-	// throw in a little tilt.
-	view->angles[YAW] -= bob * 0.5;
-	view->angles[ROLL] -= bob * 1;
-	view->angles[PITCH] -= bob * 0.3;
-
-	if (0 != cl_bobtilt->value)
-	{
-		VectorCopy(view->angles, view->curstate.angles);
+		view->origin[i] += bobRight * 0.33 * pparams->right[i];
+		view->origin[i] += bobUp * 0.17 * pparams->up[i];
 	}
 
 	// pushing the view origin down off of the same X/Z plane as the ent's origin will give the
@@ -697,6 +765,10 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 	VectorAdd(pparams->viewangles, (float*)&ev_punchangle, pparams->viewangles);
 
 	V_DropPunchAngle(pparams->frametime, (float*)&ev_punchangle);
+
+	V_CalcViewModelLag(pparams, view->origin, pparams->viewangles, pparams->cl_viewangles);
+
+	VectorCopy(view->angles, view->curstate.angles);
 
 	// smooth out stair step ups
 #if 1

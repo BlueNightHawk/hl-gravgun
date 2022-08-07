@@ -1574,6 +1574,55 @@ void EV_SnarkFire(event_args_t* args)
 //	   SQUEAK END
 //======================
 
+//======================
+//	   GRAVGUN START
+//======================
+void EV_GravGun(event_args_t* args)
+{
+	int idx;
+	int targidx;
+	int m_iBeam;
+	bool isBspModel;
+	Vector vecSrc, angles, forward;
+	pmtrace_t tr;
+
+	idx = args->entindex;
+	targidx = args->iparam1;
+	isBspModel = args->bparam1;
+	VectorCopy(args->origin, vecSrc);
+	VectorCopy(args->angles, angles);
+
+	m_iBeam = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/smoke.spr");
+
+	AngleVectors(angles, forward, NULL, NULL);
+
+	if (EV_IsLocal(idx))
+	{
+		if (targidx > 0)
+			gEngfuncs.pEventAPI->EV_WeaponAnimation(GAUSS_FIRE2, 0);
+		else
+			gEngfuncs.pEventAPI->EV_WeaponAnimation(GAUSS_FIRE, 0);
+	}
+
+	if (targidx > 0)
+	{
+		cl_entity_t* targent = gEngfuncs.GetEntityByIndex(targidx);
+
+		Vector targpos = targent->origin;
+		targpos[2] += targent->curstate.maxs[2] / 2;
+		if (isBspModel)
+			VectorAverage(targent->curstate.maxs + targent->origin, targent->curstate.mins + targent->origin, targpos);
+
+		gEngfuncs.pEfxAPI->R_BeamEntPoint(idx | 0x1000, targpos, m_iBeam, 0.1, 0.4, 0.4, 1, 0.4, 0, 1, 1, 1, 0); 
+
+		gEngfuncs.pEventAPI->EV_PlaySound(idx, args->origin, CHAN_WEAPON, "weapons/gauss2.wav", 0.5, ATTN_NORM, 0, 85 + gEngfuncs.pfnRandomLong(0, 0x1f));
+
+	}
+}
+//======================
+//	   GRAVGUN END
+//======================
+
 void EV_TrainPitchAdjust(event_args_t* args)
 {
 	int idx;
